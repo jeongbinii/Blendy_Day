@@ -1,1 +1,44 @@
 @import "tailwindcss";
+
+@theme {
+  --color-bg:          #F9F8F6;
+  --color-bg-dark:     #1a1a1e;
+  --color-surface:     #FFFFFF;
+  --color-surface-dark:#25252a;
+  --color-border:      #E8E6E0;
+  --color-border-dark: #2e2e34;
+
+  --color-primary:     #7895B2;
+  --color-primary-dark:#92aecb;
+
+  --color-text:        #4a4640;
+  --color-text-dark:   #c9c3bc;
+  --color-heading:     #1e1a16;
+  --color-heading-dark:#f0ece8;
+  --color-muted:       #9b948c;
+
+  --color-good:        #f0c05a;   /* 머스타드 옐로우 */
+  --color-bad:         #a8c5a0;   /* 세이지 그린 */
+  --color-good-bg:     #fdf6e0;
+  --color-bad-bg:      #edf4ec;
+
+  --font-sans: 'Nanum Myeongjo', Georgia, serif;
+  --font-mono: ui-monospace, Consolas, monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background-color: var(--color-bg-dark);
+    color: var(--color-text-dark);
+  }
+}
