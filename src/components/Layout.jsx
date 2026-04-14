@@ -1,4 +1,6 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { supabase } from '../lib/supabase'
 
 const NAV_ITEMS = [
   { to: '/chat',      label: '오늘 기록' },
@@ -8,6 +10,28 @@ const NAV_ITEMS = [
 ]
 
 export default function Layout() {
+  const navigate = useNavigate()
+  const [user, setUser] = useState(null)
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setUser(data.session?.user ?? null)
+    })
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
+      setUser(session?.user ?? null)
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
+
+  async function handleLogout() {
+    await supabase.auth.signOut()
+    navigate('/')
+  }
+
+  const displayName = user?.user_metadata?.name ?? user?.email?.split('@')[0]
+
   return (
     <div className="min-h-screen flex flex-col">
       <header className="sticky top-0 z-50 bg-[#F9F8F6]/80 backdrop-blur border-b border-[#E8E6E0]">
@@ -34,12 +58,24 @@ export default function Layout() {
             ))}
           </nav>
 
-          <NavLink
-            to="/login"
-            className="text-sm px-4 py-1.5 rounded-lg border border-[#E8E6E0] text-[#4a4640] hover:border-[#7895B2] hover:text-[#7895B2] transition-colors"
-          >
-            로그인
-          </NavLink>
+          {user ? (
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-text">{displayName}</span>
+              <button
+                onClick={handleLogout}
+                className="text-sm px-4 py-1.5 rounded-lg border border-border text-muted hover:border-red-300 hover:text-red-500 transition-colors"
+              >
+                로그아웃
+              </button>
+            </div>
+          ) : (
+            <NavLink
+              to="/login"
+              className="text-sm px-4 py-1.5 rounded-lg border border-border text-text hover:border-primary hover:text-primary transition-colors"
+            >
+              로그인
+            </NavLink>
+          )}
         </div>
       </header>
 
@@ -48,7 +84,7 @@ export default function Layout() {
       </main>
 
       <footer className="border-t border-[#E8E6E0] py-6 text-center text-xs text-[#9b948c]">
-        © 2026 EchoDiary — 당신의 대화가 일기가 됩니다
+        © 2026 Blendy Day — 당신의 대화가 일기가 됩니다
       </footer>
     </div>
   )

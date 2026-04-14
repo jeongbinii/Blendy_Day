@@ -1,45 +1,175 @@
-import { useState } from 'react'
-import { EMOTIONS } from '../constants/emotions'
+import { useState, useEffect, useRef } from 'react'
+import { supabase } from '../lib/supabase'
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000'
 
 const GENDER_OPTIONS = [
-  { id: 'any', label: '상관없음' },
-  { id: 'female', label: '여성' },
-  { id: 'male', label: '남성' },
+  { id: '무관', label: '무관' },
+  { id: '여성', label: '여성' },
+  { id: '남성', label: '남성' },
 ]
 
 const AGE_MIN = 15
 const AGE_MAX = 65
 
 export default function Match() {
-  const [matchState, setMatchState] = useState('idle')
-  const [gender, setGender] = useState('any')
+  const [matchState, setMatchState] = useState('idle') // idle | searching | found | notfound
+  const [gender, setGender] = useState('무관')
   const [ageMin, setAgeMin] = useState(20)
   const [ageMax, setAgeMax] = useState(35)
-  const [emotion, setEmotion] = useState(null)
+
+  const [userId, setUserId] = useState(null)
+  const [myTags, setMyTags] = useState([])
+  const [matchedUser, setMatchedUser] = useState(null)
+
+  // 채팅 관련
+  const [roomId, setRoomId] = useState(null)
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
-  const [tags, setTags] = useState(['#회사생활', '#작은성취', '#오랜친구'])
-  const [editingTags, setEditingTags] = useState(false)
-  const [tagInput, setTagInput] = useState('')
+  const [sending, setSending] = useState(false)
+  const [closed, setClosed] = useState(false)
+  const bottomRef = useRef(null)
+  const inputRef = useRef(null)
 
-  function startMatch() {
+  // 로그인 유저 정보 + 해시태그 로드
+  useEffect(() => {
+    supabase.auth.getSession().then(async ({ data }) => {
+      const uid = data.session?.user?.id
+      if (!uid) return
+      setUserId(uid)
+      try {
+        const res = await fetch(`${API_URL}/api/users/${uid}`)
+        const user = await res.json()
+        setMyTags(user.hashtags ?? [])
+      } catch { /* ignore */ }
+    })
+  }, [])
+
+  // 채팅방 Realtime 구독
+  useEffect(() => {
+    if (!roomId || !userId) return
+
+    // 기존 메시지 로드
+    fetch(`${API_URL}/api/room/${roomId}/messages`)
+      .then((r) => r.json())
+      .then((data) => setMessages(data.messages ?? []))
+      .catch(() => {})
+
+    const channel = supabase
+      .channel(`room:${roomId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `room_id=eq.${roomId}`,
+        },
+        (payload) => {
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === payload.new.id)) return prev
+            return [...prev, payload.new]
+          })
+        },
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'rooms',
+          filter: `id=eq.${roomId}`,
+        },
+        (payload) => {
+          if (payload.new.status === 'closed') {
+            setClosed(true)
+          }
+        },
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [roomId, userId])
+
+  // 메시지 스크롤
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
+
+  // 전송 완료 후 입력창 포커스
+  useEffect(() => {
+    if (!sending) inputRef.current?.focus()
+  }, [sending])
+
+  async function startMatch() {
+    if (!userId) return
     setMatchState('searching')
-    setTimeout(() => {
-      setMatchState('found')
-      setMessages([{ role: 'them', text: '안녕하세요 😊 비슷한 하루를 보내셨군요!' }])
-    }, 2000)
+    setMatchedUser(null)
+    setRoomId(null)
+    setMessages([])
+    setClosed(false)
+
+    try {
+      const res = await fetch(`${API_URL}/api/match`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          mode: '공감형',
+          preferredGender: gender,
+          minAge: ageMin,
+          maxAge: ageMax,
+        }),
+      })
+      const matchData = await res.json()
+
+      if (matchData.matched) {
+        setMatchedUser(matchData.user)
+
+        // 자동으로 채팅방 생성
+        const roomRes = await fetch(`${API_URL}/api/room`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userAId: userId, userBId: matchData.user.id }),
+        })
+        const roomData = await roomRes.json()
+        setRoomId(roomData.room_id)
+
+        setMatchState('found')
+      } else {
+        setMatchState('notfound')
+      }
+    } catch {
+      setMatchState('notfound')
+    }
   }
 
-  function send() {
-    if (!input.trim()) return
-    setMessages((prev) => [...prev, { role: 'me', text: input }])
-    setInput('')
-    setTimeout(() => {
-      setMessages((prev) => [
-        ...prev,
-        { role: 'them', text: '맞아요, 저도 그런 경험이 있어요. 많이 힘드셨겠어요 💙' },
-      ])
-    }, 1000)
+  async function sendMessage() {
+    if (!input.trim() || sending || closed || !roomId) return
+    setSending(true)
+    try {
+      await fetch(`${API_URL}/api/room/${roomId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ senderId: userId, content: input }),
+      })
+      setInput('')
+    } catch { /* ignore */ } finally {
+      setSending(false)
+    }
+  }
+
+  async function leaveRoom() {
+    if (roomId) {
+      await fetch(`${API_URL}/api/room/${roomId}/close`, { method: 'PATCH' })
+    }
+    setMatchState('idle')
+    setMatchedUser(null)
+    setRoomId(null)
+    setMessages([])
+    setClosed(false)
   }
 
   function OptionButton({ selected, onClick, children }) {
@@ -70,59 +200,18 @@ export default function Match() {
       {matchState === 'idle' && (
         <>
           {/* 오늘 내 태그 */}
-          <div className="p-5 rounded-2xl bg-white shadow-xl mb-2">
+          <div className="p-5 rounded-2xl bg-white shadow-xl mb-6">
             <p className="text-xs text-muted mb-3">오늘 내 일기 태그</p>
             <div className="flex gap-2 flex-wrap">
-              {tags.map((tag) => (
-                <span key={tag} className="flex items-center gap-1 text-xs px-3 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">
+              {myTags.length > 0 ? myTags.map((tag) => (
+                <span key={tag} className="text-xs px-3 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">
                   {tag}
-                  {editingTags && (
-                    <button
-                      onClick={() => setTags(tags.filter((t) => t !== tag))}
-                      className="ml-0.5 text-primary/60 hover:text-primary leading-none"
-                    >
-                      ×
-                    </button>
-                  )}
                 </span>
-              ))}
+              )) : (
+                <p className="text-xs text-muted">아직 태그가 없어요. 일기를 먼저 작성해주세요.</p>
+              )}
             </div>
-            {editingTags && (
-              <div className="flex gap-2 mt-3">
-                <input
-                  value={tagInput}
-                  onChange={(e) => setTagInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      const raw = tagInput.trim()
-                      if (!raw) return
-                      const t = raw.startsWith('#') ? raw : `#${raw}`
-                      if (!tags.includes(t)) setTags([...tags, t])
-                      setTagInput('')
-                    }
-                  }}
-                  placeholder="태그 입력 후 Enter"
-                  className="flex-1 px-3 py-1.5 rounded-xl border border-border text-xs text-heading placeholder-muted focus:outline-none focus:border-primary bg-white"
-                />
-                <button
-                  onClick={() => { setEditingTags(false); setTagInput('') }}
-                  className="px-3 py-1.5 rounded-xl bg-primary text-white text-xs"
-                >
-                  완료
-                </button>
-              </div>
-            )}
           </div>
-          {!editingTags && (
-            <div className="flex justify-end mb-4">
-              <button
-                onClick={() => setEditingTags(true)}
-                className="text-sm text-muted hover:text-primary transition-colors bg-white border border-border rounded-full px-4 py-1.5 shadow-sm hover:border-primary/40 hover:shadow-md"
-              >
-                태그 수정하기
-              </button>
-            </div>
-          )}
 
           {/* 구분선 */}
           <div className="flex items-center gap-3 mb-4">
@@ -157,9 +246,7 @@ export default function Match() {
                 <span className="text-sm font-semibold text-primary">{ageMin}세 ~ {ageMax}세</span>
               </div>
               <div className="relative h-5 flex items-center">
-                {/* 트랙 배경 */}
                 <div className="absolute w-full h-1.5 rounded-full bg-border" />
-                {/* 선택 구간 강조 */}
                 <div
                   className="absolute h-1.5 rounded-full bg-primary/60"
                   style={{
@@ -167,7 +254,6 @@ export default function Match() {
                     right: `${100 - ((ageMax - AGE_MIN) / (AGE_MAX - AGE_MIN)) * 100}%`,
                   }}
                 />
-                {/* 최소값 슬라이더 — pointer-events-none + thumb만 활성화 */}
                 <input
                   type="range"
                   min={AGE_MIN}
@@ -179,7 +265,6 @@ export default function Match() {
                   }}
                   className="absolute w-full pointer-events-none appearance-none bg-transparent [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-primary [&::-webkit-slider-thumb]:shadow-sm [&::-webkit-slider-thumb]:cursor-pointer"
                 />
-                {/* 최대값 슬라이더 */}
                 <input
                   type="range"
                   min={AGE_MIN}
@@ -192,8 +277,6 @@ export default function Match() {
                   className="absolute w-full pointer-events-none appearance-none bg-transparent [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-primary [&::-webkit-slider-thumb]:shadow-sm [&::-webkit-slider-thumb]:cursor-pointer"
                 />
               </div>
-
-              {/* 5단위 눈금 */}
               <div className="relative mt-2 h-4">
                 {Array.from({ length: (AGE_MAX - AGE_MIN) / 5 + 1 }, (_, i) => {
                   const val = AGE_MIN + i * 5
@@ -215,33 +298,12 @@ export default function Match() {
               </div>
             </div>
 
-            {/* 감정 */}
-            <div className="p-5 rounded-2xl bg-white shadow-xl">
-              <p className="text-xs font-semibold text-heading mb-3 uppercase tracking-wider">오늘의 감정</p>
-              <div className="flex gap-2 flex-wrap">
-                <OptionButton
-                  selected={emotion === null}
-                  onClick={() => setEmotion(null)}
-                >
-                  상관없음
-                </OptionButton>
-                {Object.values(EMOTIONS).map((e) => (
-                  <OptionButton
-                    key={e.id}
-                    selected={emotion === e.id}
-                    onClick={() => setEmotion(e.id)}
-                  >
-                    {e.emoji} {e.label}
-                  </OptionButton>
-                ))}
-              </div>
-            </div>
-
           </div>
 
           <button
             onClick={startMatch}
-            className="w-full py-3.5 bg-primary text-white rounded-xl text-sm font-semibold hover:bg-[#6a87a5] transition-colors shadow-sm"
+            disabled={myTags.length === 0}
+            className="w-full py-3.5 bg-primary text-white rounded-xl text-sm font-semibold hover:bg-[#6a87a5] transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
             매칭 시작하기
           </button>
@@ -253,54 +315,122 @@ export default function Match() {
           <div className="text-4xl mb-4 animate-pulse">🔍</div>
           <p className="text-heading font-medium">비슷한 하루를 보낸 사람을 찾고 있어요...</p>
           <p className="text-muted text-sm mt-2">
-            {gender !== 'any' && `${GENDER_OPTIONS.find(g => g.id === gender)?.label} · `}
-            {`${ageMin}세 ~ ${ageMax}세 · `}
-            {emotion ? `${EMOTIONS[emotion].emoji} ${EMOTIONS[emotion].label}` : '모든 감정'}
+            {gender !== '무관' ? `${gender} · ` : ''}{ageMin}세 ~ {ageMax}세
           </p>
         </div>
       )}
 
-      {matchState === 'found' && (
-        <div className="flex flex-col h-[calc(100vh-160px)]">
-          <div className="flex items-center gap-3 mb-4 p-4 rounded-2xl bg-primary/8 border border-primary/20">
-            <span className="text-2xl">🎉</span>
-            <div>
-              <p className="text-sm font-medium text-heading">매칭 완료!</p>
-              <p className="text-xs text-muted mt-0.5">오늘 비슷한 감정을 느낀 분과 연결됐어요</p>
+      {matchState === 'notfound' && (
+        <div className="text-center py-24">
+          <div className="text-4xl mb-4">😔</div>
+          <p className="text-heading font-medium">조건에 맞는 상대를 찾지 못했어요</p>
+          <p className="text-muted text-sm mt-2 mb-8">조건을 바꿔서 다시 시도해보세요</p>
+          <button
+            onClick={() => setMatchState('idle')}
+            className="px-6 py-2.5 bg-primary text-white rounded-xl text-sm hover:bg-[#6a87a5] transition-colors"
+          >
+            다시 시도하기
+          </button>
+        </div>
+      )}
+
+      {matchState === 'found' && matchedUser && (
+        <div className="flex flex-col" style={{ height: 'calc(100vh - 220px)' }}>
+          {/* 상대방 정보 배너 */}
+          <div className="flex items-center justify-between mb-4 p-4 rounded-2xl bg-primary/8 border border-primary/20">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-lg">
+                👤
+              </div>
+              <div>
+                <p className="text-sm font-medium text-heading">{matchedUser.nickname}</p>
+                <p className="text-xs text-muted">
+                  {matchedUser.gender && `${matchedUser.gender} · `}{matchedUser.age && `${matchedUser.age}세`}
+                </p>
+              </div>
             </div>
+            <button
+              onClick={leaveRoom}
+              className="text-xs text-muted hover:text-red-500 transition-colors border border-border rounded-full px-3 py-1 hover:border-red-300"
+            >
+              나가기
+            </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto flex flex-col gap-3 py-2">
-            {messages.map((msg, i) => (
-              <div key={i} className={`flex ${msg.role === 'me' ? 'justify-end' : 'justify-start'}`}>
-                <div
-                  className={`max-w-[75%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
-                    msg.role === 'me'
-                      ? 'bg-primary text-white rounded-br-sm'
-                      : 'bg-white border border-border text-heading rounded-bl-sm'
-                  }`}
-                >
-                  {msg.text}
-                </div>
-              </div>
+          {/* 겹치는 태그 표시 */}
+          <div className="flex gap-1.5 flex-wrap mb-4">
+            {(matchedUser.hashtags ?? []).map((tag) => (
+              <span key={tag} className="text-xs px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                {tag}
+              </span>
             ))}
           </div>
 
-          <div className="flex gap-2 pt-4 border-t border-border">
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && send()}
-              placeholder="따뜻한 한마디를 건네보세요"
-              className="flex-1 px-4 py-3 rounded-xl border border-border text-sm text-heading placeholder-muted focus:outline-none focus:border-primary transition-colors bg-white"
-            />
-            <button
-              onClick={send}
-              className="px-4 py-3 bg-primary text-white rounded-xl text-sm hover:bg-[#6a87a5] transition-colors"
-            >
-              전송
-            </button>
+          {/* 메시지 영역 */}
+          <div className="flex-1 overflow-y-auto flex flex-col gap-3 py-2">
+            {messages.length === 0 && !closed && (
+              <p className="text-center text-xs text-muted py-10">따뜻한 첫 인사를 건네보세요</p>
+            )}
+            {messages.map((msg) => {
+              const isMe = msg.sender_id === userId
+              return (
+                <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                  <div
+                    className={`max-w-[75%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
+                      isMe
+                        ? 'bg-primary text-white rounded-br-sm'
+                        : 'bg-white border border-border text-heading rounded-bl-sm'
+                    }`}
+                  >
+                    {msg.content}
+                  </div>
+                </div>
+              )
+            })}
+
+            {closed && (
+              <div className="text-center py-6">
+                <p className="text-sm text-muted mb-4">상대방이 채팅방을 나갔어요</p>
+                <button
+                  onClick={() => {
+                    setMatchState('idle')
+                    setMatchedUser(null)
+                    setRoomId(null)
+                    setMessages([])
+                    setClosed(false)
+                  }}
+                  className="px-6 py-2.5 bg-primary text-white rounded-xl text-sm hover:bg-[#6a87a5] transition-colors"
+                >
+                  매칭 페이지로 이동
+                </button>
+              </div>
+            )}
+
+            <div ref={bottomRef} />
           </div>
+
+          {/* 입력 영역 */}
+          {!closed && (
+            <div className="flex gap-2 pt-4 border-t border-border">
+              <input
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+                placeholder="따뜻한 한마디를 건네보세요"
+                disabled={sending}
+                autoFocus
+                className="flex-1 px-4 py-3 rounded-xl border border-border text-sm text-heading placeholder-muted focus:outline-none focus:border-primary transition-colors bg-white disabled:opacity-50"
+              />
+              <button
+                onClick={sendMessage}
+                disabled={sending}
+                className="px-5 py-3 bg-primary text-white rounded-xl text-sm hover:bg-[#6a87a5] transition-colors disabled:opacity-50"
+              >
+                전송
+              </button>
+            </div>
+          )}
         </div>
       )}
 

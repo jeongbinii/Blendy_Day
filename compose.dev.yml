@@ -7,31 +7,25 @@ services:
       - "5174:5173"
     volumes:
       - .:/app
-      - /app/node_modules        # 호스트의 node_modules가 덮어쓰지 않도록 익명 볼륨으로 격리
+      - /app/node_modules
+    env_file:
+      - .env.local
     environment:
       - NODE_ENV=development
       - VITE_API_URL=http://localhost:3000
-    depends_on:
-      db:
-        condition: service_healthy
     restart: unless-stopped
 
-  db:
-    image: postgres:17-alpine
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
     ports:
-      - "5432:5432"              # 개발 시 로컬에서 DB 직접 접근 허용
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-blendy}
-      POSTGRES_USER: ${POSTGRES_USER:-blendy}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpassword}
+      - "3000:3000"
     volumes:
-      - db_dev_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-blendy}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      - ./backend:/app
+      - /app/node_modules
+    env_file:
+      - backend/.env
+    environment:
+      - CLIENT_URL=http://localhost:5174
     restart: unless-stopped
-
-volumes:
-  db_dev_data:

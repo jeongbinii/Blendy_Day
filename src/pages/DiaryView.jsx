@@ -1,11 +1,35 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { EMOTIONS } from '../constants/emotions'
+import { supabase } from '../lib/supabase'
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000'
 
 export default function DiaryView() {
   const { state } = useLocation()
   const navigate = useNavigate()
-  const [matchesLeft, setMatchesLeft] = useState(3)
+
+  const [userId, setUserId] = useState(null)
+  const [matchesLeft, setMatchesLeft] = useState(null) // null = 로딩 중
+  const [matchLoading, setMatchLoading] = useState(false)
+
+  useEffect(() => {
+    supabase.auth.getSession().then(async ({ data }) => {
+      const uid = data.session?.user?.id
+      if (!uid) {
+        setMatchesLeft(3)
+        return
+      }
+      setUserId(uid)
+      try {
+        const res = await fetch(`${API_URL}/api/users/${uid}`)
+        const json = await res.json()
+        setMatchesLeft(json.match_count ?? 3)
+      } catch {
+        setMatchesLeft(3)
+      }
+    })
+  }, [])
 
   if (!state) {
     navigate('/dashboard', { replace: true })
@@ -14,6 +38,32 @@ export default function DiaryView() {
 
   const { content, tags, mood, date } = state
   const emotion = EMOTIONS[mood]
+  const matchReady = matchesLeft !== null
+
+  async function handleMatch() {
+    if (!matchReady || matchesLeft === 0 || matchLoading) return
+
+    if (!userId) {
+      setMatchesLeft((n) => n - 1)
+      navigate('/match')
+      return
+    }
+
+    setMatchLoading(true)
+    try {
+      const res = await fetch(`${API_URL}/api/users/${userId}/match`, {
+        method: 'PATCH',
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      setMatchesLeft(data.match_count)
+      navigate('/match')
+    } catch (err) {
+      console.error('[handleMatch]', err)
+    } finally {
+      setMatchLoading(false)
+    }
+  }
 
   return (
     <>
@@ -72,23 +122,19 @@ export default function DiaryView() {
           다시 수정하기
         </button>
         <button
-          onClick={() => {
-            if (matchesLeft === 0) return
-            setMatchesLeft((n) => n - 1)
-            navigate('/match')
-          }}
-          disabled={matchesLeft === 0}
+          onClick={handleMatch}
+          disabled={!matchReady || matchesLeft === 0 || matchLoading}
           className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-sm shadow-sm transition-all border ${
-            matchesLeft > 0
+            matchReady && matchesLeft > 0
               ? 'bg-primary text-white border-primary hover:bg-[#6a87a5] hover:shadow-md'
               : 'bg-white text-muted border-border cursor-not-allowed opacity-50'
           }`}
         >
           랜덤 매칭하기
           <span className={`flex items-center gap-0.5 text-xs px-2 py-0.5 rounded-full ${
-            matchesLeft > 0 ? 'bg-white/20 text-white' : 'bg-border text-muted'
+            matchReady && matchesLeft > 0 ? 'bg-white/20 text-white' : 'bg-border text-muted'
           }`}>
-            {matchesLeft}/3
+            {matchReady ? `${matchesLeft}/3` : '…'}
           </span>
         </button>
       </div>

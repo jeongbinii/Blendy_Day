@@ -78,7 +78,7 @@ export default function Home() {
           {FEATURES.map(({ emoji, title, desc }) => (
             <div
               key={title}
-              className="p-6 rounded-2xl bg-white shadow-xl hover:shadow-2xl transition-shadow"
+              className="p-6 rounded-2xl bg-[#FAF8F5] shadow-xl hover:shadow-2xl transition-shadow"
             >
               <span className="text-2xl mb-3 block">{emoji}</span>
               <h3 className="text-[#1e1a16] font-medium mb-1">{title}</h3>

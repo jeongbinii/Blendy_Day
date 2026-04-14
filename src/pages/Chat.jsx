@@ -1,12 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 
-const MOCK_REPLIES = [
-  '오늘 하루 수고했어요. 더 이야기해줄래요?',
-  '그랬군요, 어떤 기분이었나요?',
-  '그 순간 어떤 생각이 들었어요?',
-  '조금 더 얘기해줄 수 있어요?',
-]
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000'
 
 function formatDate() {
   return new Date().toLocaleDateString('ko-KR', {
@@ -15,23 +10,51 @@ function formatDate() {
 }
 
 export default function Chat() {
-  const [messages, setMessages] = useState([
-    { role: 'ai', text: '오늘 하루 어땠어? 편하게 말해줘 😊' },
-  ])
-  const [input, setInput] = useState('')
-  const bottomRef = useRef(null)
+  const { state } = useLocation()
   const navigate = useNavigate()
+
+  const [messages, setMessages] = useState(
+    state?.messages?.length > 0
+      ? state.messages
+      : [{ role: 'ai', text: '오늘 하루 어땠어? 편하게 말해줘 😊' }],
+  )
+  const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(false)
+  const bottomRef = useRef(null)
+  const inputRef = useRef(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  function send() {
-    if (!input.trim()) return
+  // 응답 완료 후 입력창 포커스
+  useEffect(() => {
+    if (!loading) inputRef.current?.focus()
+  }, [loading])
+
+  async function send() {
+    if (!input.trim() || loading) return
+
     const userMsg = { role: 'user', text: input }
-    const aiMsg = { role: 'ai', text: MOCK_REPLIES[Math.floor(Math.random() * MOCK_REPLIES.length)] }
-    setMessages((prev) => [...prev, userMsg, aiMsg])
+    const updated = [...messages, userMsg]
+    setMessages(updated)
     setInput('')
+    setLoading(true)
+
+    try {
+      const res = await fetch(`${API_URL}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: updated }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      setMessages((prev) => [...prev, { role: 'ai', text: data.text }])
+    } catch {
+      setMessages((prev) => [...prev, { role: 'ai', text: '죄송해요, 잠시 문제가 생겼어요. 다시 말해줄래요?' }])
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -67,6 +90,17 @@ export default function Chat() {
               </div>
             </div>
           ))}
+          {loading && (
+            <div className="flex justify-start">
+              <div className="px-5 py-3 bg-slate-100 rounded-2xl rounded-tl-none">
+                <div className="flex gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-muted animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <span className="w-2 h-2 rounded-full bg-muted animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <span className="w-2 h-2 rounded-full bg-muted animate-bounce" style={{ animationDelay: '300ms' }} />
+                </div>
+              </div>
+            </div>
+          )}
           <div ref={bottomRef} />
         </div>
 
@@ -75,15 +109,19 @@ export default function Chat() {
           {/* 알약형 입력창 + 전송 버튼 */}
           <div className="flex items-center bg-gray-100 rounded-full px-4 py-1.5 gap-2">
             <input
+              ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && send()}
               placeholder="오늘 어떤 일이 있었나요?"
               className="flex-1 bg-transparent text-sm text-heading placeholder-muted focus:outline-none py-2 px-1"
+              disabled={loading}
+              autoFocus
             />
             <button
               onClick={send}
-              className="px-5 py-2.5 bg-[#5a7a9a] text-white rounded-full text-sm font-medium hover:bg-[#4e6d8c] transition-colors shrink-0"
+              disabled={loading}
+              className="px-5 py-2.5 bg-[#5a7a9a] text-white rounded-full text-sm font-medium hover:bg-[#4e6d8c] transition-colors shrink-0 disabled:opacity-50"
             >
               전송
             </button>
@@ -92,7 +130,7 @@ export default function Chat() {
           {/* 일기 완성하기 버튼 */}
           <div className="flex justify-center mt-4">
             <button
-              onClick={() => navigate('/diary/edit')}
+              onClick={() => navigate('/diary/edit', { state: { messages } })}
               className="inline-flex items-center gap-2 px-7 py-2.5 rounded-full border border-primary text-primary text-sm hover:bg-primary/5 transition-colors"
             >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
