@@ -20,6 +20,8 @@ export default function Match() {
 
   const [userId, setUserId] = useState(null)
   const [myTags, setMyTags] = useState([])
+  const [editingTags, setEditingTags] = useState(false)
+  const [tagInput, setTagInput] = useState('')
   const [matchedUser, setMatchedUser] = useState(null)
 
   // 채팅 관련
@@ -112,6 +114,20 @@ export default function Match() {
     setClosed(false)
 
     try {
+      // 현재 편집 중인 태그를 먼저 DB에 반영 (저장 여부와 무관하게 최신 상태 반영)
+      const { data: session } = await supabase.auth.getSession()
+      if (session?.session) {
+        await fetch(`${API_URL}/api/hashtags`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session.session.access_token}`,
+          },
+          body: JSON.stringify({ hashtags: myTags }),
+        }).catch(() => {})
+      }
+      setEditingTags(false)
+
       const res = await fetch(`${API_URL}/api/match`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -200,17 +216,81 @@ export default function Match() {
       {matchState === 'idle' && (
         <>
           {/* 오늘 내 태그 */}
-          <div className="p-5 rounded-2xl bg-white shadow-xl mb-6">
-            <p className="text-xs text-muted mb-3">오늘 내 일기 태그</p>
+          <div className="p-5 rounded-2xl bg-white shadow-xl mb-2">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs text-muted">오늘 내 일기 태그</p>
+              {myTags.length > 0 && !editingTags && (
+                <button
+                  onClick={() => setEditingTags(true)}
+                  className="inline-flex items-center gap-1 text-xs px-3 py-1 rounded-full border border-primary/40 text-primary bg-primary/5 hover:bg-primary/10 transition-colors"
+                >
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                    <path d="M11.5 2.5 13.5 4.5L5 13H3V11L11.5 2.5Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  태그 수정
+                </button>
+              )}
+            </div>
             <div className="flex gap-2 flex-wrap">
               {myTags.length > 0 ? myTags.map((tag) => (
-                <span key={tag} className="text-xs px-3 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">
+                <span key={tag} className="inline-flex items-center gap-1 text-xs px-3 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">
                   {tag}
+                  {editingTags && (
+                    <button
+                      onClick={() => setMyTags((prev) => prev.filter((t) => t !== tag))}
+                      className="text-primary/60 hover:text-primary leading-none"
+                      aria-label="태그 삭제"
+                    >
+                      ×
+                    </button>
+                  )}
                 </span>
               )) : (
                 <p className="text-xs text-muted">아직 태그가 없어요. 일기를 먼저 작성해주세요.</p>
               )}
             </div>
+
+            {editingTags && (
+              <div className="flex flex-col gap-2 mt-4">
+                <div className="flex gap-2">
+                  <input
+                    value={tagInput}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        const raw = tagInput.trim()
+                        if (!raw) return
+                        const t = raw.startsWith('#') ? raw : `#${raw}`
+                        if (!myTags.includes(t)) setMyTags((prev) => [...prev, t])
+                        setTagInput('')
+                      }
+                    }}
+                    placeholder="태그 추가 (# 없이 입력 가능)"
+                    className="flex-1 px-3 py-1.5 rounded-xl border border-border text-xs text-heading placeholder-muted focus:outline-none focus:border-primary bg-white"
+                  />
+                  <button
+                    onClick={async () => {
+                      const { data: session } = await supabase.auth.getSession()
+                      if (!session?.session) return
+                      await fetch(`${API_URL}/api/hashtags`, {
+                        method: 'PUT',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          Authorization: `Bearer ${session.session.access_token}`,
+                        },
+                        body: JSON.stringify({ hashtags: myTags }),
+                      })
+                      setEditingTags(false)
+                      setTagInput('')
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-primary text-white text-xs hover:bg-[#6a87a5] transition-colors"
+                  >
+                    저장
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* 구분선 */}

@@ -25,21 +25,23 @@ const supabase = createClient(
 
 const CHAT_SYSTEM_PROMPT_QUESTION = `당신은 사용자의 하루를 따뜻하게 들어주는 AI 친구입니다.
 아래 규칙을 반드시 지켜 응답하세요.
-- 공감의 말 1~3문장으로 시작하세요.
-- 마지막은 반드시 감정을 이끌어내는 질문으로 마무리하세요.
-- 전체 응답은 5문장 이내로 작성하세요.
-- 따뜻하고 친근한 말투를 사용하세요.`
+- 짧은 공감 한 문장 + 감정을 이끌어내는 질문 한 문장, 총 1~2문장으로만 응답하세요.
+- 공감이 길어지지 않도록 간결하게 표현하세요.
+- 반드시 존댓말을 사용하세요.
+- 따뜻하고 친근한 말투로 작성하세요.
+- 이모지나 이모티콘은 사용하지 마세요.`
 
 const CHAT_SYSTEM_PROMPT_STATEMENT = `당신은 사용자의 하루를 따뜻하게 들어주는 AI 친구입니다.
 이번 응답은 매우 중요합니다. 아래 규칙을 반드시 지키세요.
 - 절대 질문하지 마세요. 물음표(?)를 사용하지 마세요.
 - "~나요?", "~어때요?", "~까요?", "~을까요?" 같은 의문형 어미 금지.
 - 모든 문장은 반드시 마침표(.)로 끝내세요.
-- 공감, 위로, 격려, 지지의 말만 전하세요.
-- 전체 응답은 5문장 이내로 작성하세요.
-- 따뜻하고 친근한 말투를 사용하세요.
+- 공감, 위로, 격려의 말만 간결하게 1~2문장으로 전하세요.
+- 반드시 존댓말을 사용하세요.
+- 따뜻하고 친근한 말투로 작성하세요.
+- 이모지나 이모티콘은 사용하지 마세요.
 
-예시: "오늘 정말 많이 힘드셨겠어요. 그런 상황에서 끝까지 버텨낸 당신이 정말 대단해요. 지금은 잠시 쉬어가도 괜찮아요. 내일은 조금 더 가벼운 마음으로 시작할 수 있을 거예요."`
+예시: "오늘 정말 많이 힘드셨겠어요. 그런 상황에서 끝까지 버텨낸 당신이 정말 대단해요."`
 
 // POST /api/chat
 // Body: { messages: [{ role: 'user' | 'ai', text: string }] }
@@ -110,6 +112,34 @@ JSON 형식으로만 응답하세요.
 #연애 #짝사랑 #이별 #썸 #가족 #부모님 #형제자매 #친구 #직장동료 #갈등 #그리움 #배신 #의존 #고독
 #직장 #학교 #번아웃 #취준 #야근 #군대 #육아 #새벽감성 #주말 #명절 #습관 #루틴 #건강 #다이어트
 #돈걱정 #진로 #자존감 #자책 #미래불안 #선택장애 #현실도피 #목표 #동기부여 #자기계발 #비교 #열등감`
+
+// PUT /api/hashtags — 수동으로 해시태그 수정 (덮어쓰기)
+// Body: { hashtags: string[] }
+// Headers: Authorization: Bearer <token>
+app.put('/api/hashtags', async (req, res) => {
+  const { hashtags } = req.body
+  if (!Array.isArray(hashtags)) {
+    return res.status(400).json({ error: '해시태그 배열이 필요합니다.' })
+  }
+
+  const token = req.headers.authorization?.replace('Bearer ', '')
+  if (!token) return res.status(401).json({ error: 'Unauthorized' })
+
+  const { data: { user }, error: authError } = await supabase.auth.getUser(token)
+  if (authError || !user) return res.status(401).json({ error: 'Invalid token' })
+
+  const { error } = await supabase
+    .from('users')
+    .update({ hashtags })
+    .eq('id', user.id)
+
+  if (error) {
+    console.error('[PUT /api/hashtags]', error)
+    return res.status(500).json({ error: '해시태그 저장에 실패했습니다.' })
+  }
+
+  res.json({ hashtags })
+})
 
 // POST /api/hashtags
 // Body: { diaryText: string }
@@ -372,13 +402,13 @@ app.post('/api/diary/generate', async (req, res) => {
       .map((m) => `${m.role === 'user' ? '사용자' : 'AI'}: ${m.text}`)
       .join('\n')
 
-    const draftPrompt = `다음은 사용자가 오늘 하루에 대해 AI와 나눈 대화입니다:\n\n${conversation}\n\n이 대화 내용만을 바탕으로 짧고 담백한 1인칭 일기를 작성하세요.
+    const draftPrompt = `다음은 사용자가 오늘 하루에 대해 AI와 나눈 대화입니다:\n\n${conversation}\n\n이 대화 내용을 바탕으로 자연스러운 1인칭 일기를 작성하세요.
 
 규칙:
-- 전체 분량은 4~6문장으로 제한하세요.
-- 대화에 나오지 않은 내용은 절대 추가하지 마세요. 과장하거나 꾸미지 마세요.
-- 사용자의 말투를 그대로 살려주세요.
-- 감정은 자연스럽게 한두 번만 드러내면 충분합니다.
+- 전체 분량은 2~3문단, 8~10문장 정도로 작성하세요.
+- 대화에 나오지 않은 내용은 절대 지어내지 마세요. 단, 대화 속 사실을 자연스럽게 이어주거나 감정을 풀어내는 건 괜찮습니다.
+- 사용자의 말투와 어조를 살려주세요.
+- 감정과 상황이 흐름 있게 이어지도록 구성하세요.
 - 일기 내용만 출력하고 다른 설명은 쓰지 마세요.`
 
     const draftResult = await model.generateContent(draftPrompt)

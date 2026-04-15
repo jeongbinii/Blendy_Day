@@ -16,7 +16,7 @@ export default function Chat() {
   const [messages, setMessages] = useState(
     state?.messages?.length > 0
       ? state.messages
-      : [{ role: 'ai', text: '오늘 하루 어땠어? 편하게 말해줘 😊' }],
+      : [{ role: 'ai', text: '오늘 하루 가장 기억에 남는 일은 뭔가요? 편하게 말해주세요.' }],
   )
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
